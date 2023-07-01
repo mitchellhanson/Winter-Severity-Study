@@ -3,8 +3,8 @@ library(ggplot2)
 library(dplyr)
 library(tidyr)
 library(splines)
-library(glmnet)
-library(Matrix)
+library(xtable)
+library(stargazer)
 allweatherdata <- read.csv("/Users/xuanruizhang/Desktop/voltage/Thesis/Winter-And-Pop.csv")
 myset <- setdiff(1:nrow(allweatherdata), (14224:14288))
 allweatherdata <- allweatherdata[myset,]
@@ -17,10 +17,12 @@ for (i in 1:nrow(allweatherdata)){
   allweatherdata$maxwinter[i] <-  max(allweatherdata[allweatherdata$Location == temp,]$AWSSI)
   allweatherdata$AdjAWSSI[i] <- allweatherdata$AWSSI[i]/allweatherdata$maxwinter[i]
 }
+
 #Average AdjAWSSI
 avgadja <- (aggregate(allweatherdata$AdjAWSSI, list(allweatherdata$Season), FUN=mean))[1:69,]
 avgg <- (aggregate(allweatherdata$AWSSI, list(allweatherdata$Season), FUN=mean))[1:69,]
 avlg<- avgg <- (aggregate(log(allweatherdata$AWSSI + 1), list(allweatherdata$Season), FUN=mean))[1:69,]
+
 
 #Population weighted AdjAWSSI
 totalpop <- aggregate(allweatherdata$X2010Pop,list(allweatherdata$Season), FUN=sum )[1:69,]
@@ -64,21 +66,30 @@ calc_lbp <- function(mydata,rou,lth){
 
 ##Import GDP Data
 dfgdp <- read.csv("/Users/xuanruizhang/Desktop/voltage/Thesis/gdp.csv")[1:289,]
-#GDP Used (1990-2019)
-newgdp = dfgdp$GDP[212:289]
+#GDP Used (2000-2019)
+newgdp = dfgdp$GDP [212:289]
 covars_gdp = rep(0,21)
 for (i in 1:21){
   covars_gdp[i] = calc_autocov(i-1,newgdp)
 }
 corr_gdp <- covars_gdp/covars_gdp[1]
-calc_lbp(newgdp, corr_gdp, length(corr_gdp) - 1)
+LB <- rep(0,20)
+for (i in 1:20){
+  LB[i] = LBS(i,newgdp,corr_gdp)
+}
+LBP <- calc_lbp(newgdp, corr_gdp, length(corr_gdp) - 1)
 mydf <- cbind.data.frame(0:20, corr_gdp) 
 colnames(mydf) <- c('Index', 'Corr')
 #GDP Corrrelogram
-ggplot() + geom_line(aes(x = mydf$Index , y=mydf$Corr)) +
-  labs(x = "Period", y = "Autocorrelation Coefficients", title = "Correlogram With 32 Lags") + 
+plot1 <- ggplot() + geom_line(aes(x = mydf$Index , y=mydf$Corr)) +
+  labs(x = "Period", y = "Autocorrelation Coefficients", title = "Correlogram With 20 Lags") + 
   theme_bw() + theme(plot.title = element_text(hjust = 0.5)) + theme(text=element_text(size=20,  family="CMU Serif"))  
 
+ggsave(filename = "plot1.png", plot = plot1, width = 8, height = 5, path = "/Users/xuanruizhang/Desktop/voltage/Thesis")
+
+#output table
+cto <- cbind.data.frame(corr_gdp[2:21], LB,LBP)
+xtable(cto)
 
 ##Setup of OLS
 q2gdp <- rep(0,69)
@@ -92,9 +103,17 @@ for (i in seq(16,288,4)){
   q3gdp[(i/4)-3] <-  dfgdp$GDP[i-2] 
   q2gdp[(i/4)-3] <-  dfgdp$GDP[i-3] 
 }
-avgadja$gdp <- q1gdp
-summary(lm(q1gdp[51:69]~paww$x[51:69] + q4gdp[51:69]  + q3gdp[51:69] ))
-plot(q1gdp[50:69],avgg$x[50:69],q3gdp[51:69])
+#Run OLS
+#Adj
+OLS1 <- lm(q1gdp[51:69]~avgadja $x[51:69] + q4gdp[51:69]  + q3gdp[51:69])
+#
+OLS2 <- lm(q1gdp[51:69]~avgg $x[51:69] + q4gdp[51:69]  + q3gdp[51:69])
+#Pa
+OLS3 <- lm(q1gdp[51:69]~paww $adjx[51:69] + q4gdp[51:69]  + q3gdp[51:69])
+#Adj,Pa
+OLS4 <- lm(q1gdp[51:69]~paww2 $adjx[51:69] + q4gdp[51:69]  + q3gdp[51:69])
+stargazer(OLS1,OLS2, title="Results", align=TRUE)
+stargazer(OLS3,OLS4, title="Results", align=TRUE)
 
 ##Local Linear Estimator with gaussian kernel
 #Gaussian Kernel
@@ -112,9 +131,9 @@ myll <- function(bw, X, Y, L){
     alldta <- cbind(X,Y)
     sel <- c()
     for(j in 1:length(X)){
-      if ((abs(L[i] - X[j]) < bw) && (abs(L[i] - X[j])>0) ){
+ #     if ((abs(L[i] - X[j]) < bw) && (abs(L[i] - X[j])>0) ){
         sel <- rbind(sel,alldta[j,])
-      }
+#      }
     }
     weight <- rep(0,nrow(sel))
     for (j in 1:nrow(sel)){
@@ -152,7 +171,8 @@ myll_gauss_sigma <-function(X,Y,bw,L){
   Rk <- 1/(2*sqrt(pi))
   for (i in 1:length(L)){
     E <- c(L[i])
-    esti <- cbind(rep(1,length(X)),X) %*% myll(bw,X,Y,E) - Y
+    #esti <- cbind(rep(1,length(X)),X) %*% myll(bw,X,Y,E) - Y
+    esti <- myll(bw,X,Y,X)[1,] - Y
     e2 <- esti^2
     upper <- 0
     lower <- 0
@@ -169,19 +189,69 @@ myll_gauss_sigma <-function(X,Y,bw,L){
 Y <- q1gdp[51:69]
 X <- avgadja$x[51:69]
 G <- seq(0.3,0.65, by=0.01)
-myll_cv(X,Y,0.01,0.1,0.9)
-LL <- myll(0.18,X,Y,G)[1,]
-ll_95cl <- 1.96 * myll_gauss_sigma(X,Y,0.18,G)
+opt_bandwidth  <- myll_cv(X,Y,0.01,0.06,0.9)
+LL <- myll(opt_bandwidth,X,Y,G)[1,] 
+ll_95cl <- 1.96 * myll_gauss_sigma(X,Y,opt_bandwidth,G)
 ll95_low  <- LL - ll_95cl
 ll95_high <- LL + ll_95cl
 
 alldata = cbind.data.frame(X,Y)
 output = cbind.data.frame(G, ll95_low, ll95_high,LL)
-ggplot() + geom_point(data=alldata, mapping=aes(x=X,y=Y))+
+plot2 <- ggplot() + geom_point(data=alldata, mapping=aes(x=X,y=Y))+
   geom_ribbon(data=output,mapping=aes(x=G,ymin=ll95_low,ymax=ll95_high),fill = 'rosybrown',alpha=0.5)+
   geom_line(data=output, mapping=aes(x=G,y=LL),size=1.5)+
-  labs(x = "X", y = "Y", title = "Local Linear Estimation") + 
+  labs(x = "Average Adjusted AWSSI", y = "Q1 GDP Growth", title = "Local Linear Regression") + 
   theme_bw() + theme(plot.title = element_text(hjust = 0.5)) + theme(text=element_text(size=22,  family="CMU Serif")) 
+ggsave(filename = "plot2.png", plot = plot2, width = 12, height = 7.5, path = "/Users/xuanruizhang/Desktop/voltage/Thesis")
+
+X <- avgg$x[51:69]
+G <- seq(5.3,6.2 ,by=0.01)
+opt_bandwidth  <- myll_cv(X,Y,0.01,0.1,2)
+LL <- myll(opt_bandwidth,X,Y,G)[1,]
+ll_95cl <- 1.96 * myll_gauss_sigma(X,Y,opt_bandwidth,G)
+ll95_low  <- LL - ll_95cl
+ll95_high <- LL + ll_95cl
+alldata = cbind.data.frame(X,Y)
+output = cbind.data.frame(G, ll95_low, ll95_high,LL)
+plot3 <- ggplot() + geom_point(data=alldata, mapping=aes(x=X,y=Y))+
+  geom_ribbon(data=output,mapping=aes(x=G,ymin=ll95_low,ymax=ll95_high),fill = 'rosybrown',alpha=0.5)+
+  geom_line(data=output, mapping=aes(x=G,y=LL),size=1.5)+
+  labs(x = "Average AWSSI", y = "Q1 GDP Growth", title = "Local Linear Regression") + 
+  theme_bw() + theme(plot.title = element_text(hjust = 0.5)) + theme(text=element_text(size=22,  family="CMU Serif")) 
+ggsave(filename = "plot3.png", plot = plot3, width = 12, height = 7.5, path = "/Users/xuanruizhang/Desktop/voltage/Thesis")
+
+X <- paww$adjx[51:69]
+G <- seq(0.15,0.5 ,by=0.01)
+opt_bandwidth  <- myll_cv(X,Y,0.01,0.06,0.9)
+LL <- myll(opt_bandwidth,X,Y,G)[1,]
+ll_95cl <- 1.96 * myll_gauss_sigma(X,Y,opt_bandwidth,G)
+ll95_low  <- LL - ll_95cl
+ll95_high <- LL + ll_95cl
+alldata = cbind.data.frame(X,Y)
+output = cbind.data.frame(G, ll95_low, ll95_high,LL)
+plot4 <- ggplot() + geom_point(data=alldata, mapping=aes(x=X,y=Y))+
+  geom_ribbon(data=output,mapping=aes(x=G,ymin=ll95_low,ymax=ll95_high),fill = 'rosybrown',alpha=0.5)+
+  geom_line(data=output, mapping=aes(x=G,y=LL),size=1.5)+
+  labs(x = "Average AWSSI (Pop Adjusted)", y = "Q1 GDP Growth", title = "Local Linear Regression") + 
+  theme_bw() + theme(plot.title = element_text(hjust = 0.5)) + theme(text=element_text(size=22,  family="CMU Serif")) 
+ggsave(filename = "plot4.png", plot = plot4, width = 12, height = 7.5, path = "/Users/xuanruizhang/Desktop/voltage/Thesis")
+
+
+X <- paww2$adjx[51:69]
+G <- seq(0.15,0.7 ,by=0.01)
+opt_bandwidth  <- myll_cv(X,Y,0.01,0.06,0.9)
+LL <- myll(opt_bandwidth,X,Y,G)[1,]
+ll_95cl <- 1.96 * myll_gauss_sigma(X,Y,opt_bandwidth,G)
+ll95_low  <- LL - ll_95cl
+ll95_high <- LL + ll_95cl
+alldata = cbind.data.frame(X,Y)
+output = cbind.data.frame(G, ll95_low, ll95_high,LL)
+plot5 <- ggplot() + geom_point(data=alldata, mapping=aes(x=X,y=Y))+
+  geom_ribbon(data=output,mapping=aes(x=G,ymin=ll95_low,ymax=ll95_high),fill = 'rosybrown',alpha=0.5)+
+  geom_line(data=output, mapping=aes(x=G,y=LL),size=1.5)+
+  labs(x = "Average AWSSI (Pop Adjusted)", y = "Q1 GDP Growth", title = "Local Linear Regression") + 
+  theme_bw() + theme(plot.title = element_text(hjust = 0.5)) + theme(text=element_text(size=22,  family="CMU Serif")) 
+ggsave(filename = "plot5.png", plot = plot5, width = 12, height = 7.5, path = "/Users/xuanruizhang/Desktop/voltage/Thesis")
 
 
 ##B - Spline Estimation
@@ -215,14 +285,57 @@ my_bscv <- function(X, Y){
   }
   return   (p_optimal)
 }
+
 #BS Estimator
+X <- avgadja$x[51:69]
+G <- seq(0.3,0.65, by=0.01)
 optimal_bs <- my_bscv(X,Y)
 BS <- unname(predict(my_spline(optimal_bs,X,Y),data.frame(X=G),interval="confidence"))
+alldata = cbind.data.frame(X,Y)
 output2 <- cbind.data.frame(G,BS)
-ggplot() + geom_point(data=alldata, mapping=aes(x=X,y=Y))+
+plot6 <- ggplot() + geom_point(data=alldata, mapping=aes(x=X,y=Y))+
   geom_ribbon(data=output2,mapping=aes(x=G,ymin=BS[,2],ymax=BS[,3]),fill = 'olivedrab',alpha=0.5)+
   geom_line(data=output2, mapping=aes(x=G,y=BS[,1],color="BS Estimator"),size=1.5)+
-  labs(x = "X", y = "Y", color = "Method", title = "B-Spline Estimation") + 
+  labs(x = "Average Adjusted AWSSI", y = "v", color = "Method", title = "B-Spline Estimation") + 
   theme_bw() + theme(plot.title = element_text(hjust = 0.5)) + theme(text=element_text(size=22,  family="CMU Serif")) 
+ggsave(filename = "plot6.png", plot = plot6, width = 12, height = 7.5, path = "/Users/xuanruizhang/Desktop/voltage/Thesis")
 
+X <- avgg$x[51:69]
+G <- seq(5.3,6.2 ,by=0.01)
+optimal_bs <- my_bscv(X,Y)
+BS <- unname(predict(my_spline(optimal_bs,X,Y),data.frame(X=G),interval="confidence"))
+alldata = cbind.data.frame(X,Y)
+output2 <- cbind.data.frame(G,BS)
+plot7 <- ggplot() + geom_point(data=alldata, mapping=aes(x=X,y=Y))+
+  geom_ribbon(data=output2,mapping=aes(x=G,ymin=BS[,2],ymax=BS[,3]),fill = 'olivedrab',alpha=0.5)+
+  geom_line(data=output2, mapping=aes(x=G,y=BS[,1],color="BS Estimator"),size=1.5)+
+  labs(x = "Average AWSSI", y = "Q1 GDP Growth", color = "Method", title = "B-Spline Estimation") + 
+  theme_bw() + theme(plot.title = element_text(hjust = 0.5)) + theme(text=element_text(size=22,  family="CMU Serif")) 
+ggsave(filename = "plot7.png", plot = plot7, width = 12, height = 7.5, path = "/Users/xuanruizhang/Desktop/voltage/Thesis")
+
+X <- paww$adjx[51:69]
+G <- seq(0.15,0.5 ,by=0.01)
+optimal_bs <- my_bscv(X,Y)
+BS <- unname(predict(my_spline(optimal_bs,X,Y),data.frame(X=G),interval="confidence"))
+alldata = cbind.data.frame(X,Y)
+output2 <- cbind.data.frame(G,BS)
+plot8 <- ggplot() + geom_point(data=alldata, mapping=aes(x=X,y=Y))+
+  geom_ribbon(data=output2,mapping=aes(x=G,ymin=BS[,2],ymax=BS[,3]),fill = 'olivedrab',alpha=0.5)+
+  geom_line(data=output2, mapping=aes(x=G,y=BS[,1],color="BS Estimator"),size=1.5)+
+  labs(x = "Average AWSSI (Pop. Adjusted)", y = "Q1 GDP Growth", color = "Method", title = "B-Spline Estimation") + 
+  theme_bw() + theme(plot.title = element_text(hjust = 0.5)) + theme(text=element_text(size=22,  family="CMU Serif")) 
+ggsave(filename = "plot8.png", plot = plot8, width = 12, height = 7.5, path = "/Users/xuanruizhang/Desktop/voltage/Thesis")
+
+X <- paww2$adjx[51:69]
+G <- seq(0.15,0.68 ,by=0.01)
+optimal_bs <- my_bscv(X,Y)
+BS <- unname(predict(my_spline(optimal_bs,X,Y),data.frame(X=G),interval="confidence"))
+alldata = cbind.data.frame(X,Y)
+output2 <- cbind.data.frame(G,BS)
+plot9 <- ggplot() + geom_point(data=alldata, mapping=aes(x=X,y=Y))+
+  geom_ribbon(data=output2,mapping=aes(x=G,ymin=BS[,2],ymax=BS[,3]),fill = 'olivedrab',alpha=0.5)+
+  geom_line(data=output2, mapping=aes(x=G,y=BS[,1],color="BS Estimator"),size=1.5)+
+  labs(x = "Average Adjusted AWSSI (Pop. Adjusted)", y = "Q1 GDP Growth", color = "Method", title = "B-Spline Estimation") + 
+  theme_bw() + theme(plot.title = element_text(hjust = 0.5)) + theme(text=element_text(size=22,  family="CMU Serif")) 
+ggsave(filename = "plot9.png", plot = plot9, width = 12, height = 7.5, path = "/Users/xuanruizhang/Desktop/voltage/Thesis")
 
