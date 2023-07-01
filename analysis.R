@@ -1,10 +1,9 @@
 rm(list = ls())
 library(ggplot2)
-library(dplyr)
-library(tidyr)
 library(splines)
 library(xtable)
 library(stargazer)
+#Statistical Anlysis Written By Xuanrui Zhang
 allweatherdata <- read.csv("/Users/xuanruizhang/Desktop/voltage/Thesis/Winter-And-Pop.csv")
 myset <- setdiff(1:nrow(allweatherdata), (14224:14288))
 allweatherdata <- allweatherdata[myset,]
@@ -338,4 +337,3 @@ plot9 <- ggplot() + geom_point(data=alldata, mapping=aes(x=X,y=Y))+
   labs(x = "Average Adjusted AWSSI (Pop. Adjusted)", y = "Q1 GDP Growth", color = "Method", title = "B-Spline Estimation") + 
   theme_bw() + theme(plot.title = element_text(hjust = 0.5)) + theme(text=element_text(size=22,  family="CMU Serif")) 
 ggsave(filename = "plot9.png", plot = plot9, width = 12, height = 7.5, path = "/Users/xuanruizhang/Desktop/voltage/Thesis")
-
